@@ -24,6 +24,14 @@ public:
     {
     }
 
+    ~ClientCompTest()
+    {
+        for(auto& regid : _regids)
+        {
+            _proxy->unregisterStatus(regid);
+        }
+    }
+
     void onEntry() override
     {
         _proxy = local::createProxy(serverAddress, _sid);
@@ -35,10 +43,32 @@ public:
                 maf::Logger::debug("Client component recevies status update of service: " ,  msg->serviceID);
                 maf::Logger::debug("Sending requests to server");
 
-                _proxy->sendRequest<clear_all_status_request>(static_cast<uint8_t>(-1));
-                Logger::debug("Server already clear all status, then start jobs...");
+//                ActionCallStatus callstatus = ActionCallStatus::Success;
 
-                registerStatus();
+//                if(auto response = _proxy->sendRequest<clear_all_status_request>(
+//                        Proxy::InfiniteWaitPeriod,
+//                        &callstatus
+//                        )
+//                    )
+//                {
+//                    if(auto error = response->getError())
+//                    {
+//                        Logger::error("Failed on request ",
+//                                      update_status_request::ID,
+//                                      ": ", error->description()
+//                                      );
+//                        Component::getActiveSharedPtr()->stop();
+//                        return;
+//                    }
+//                    else
+//                    {
+//                        auto output = response->getOutput();
+//                        Logger::debug("Received response for id: ", output->ID);
+//                    }
+//                }
+
+                Logger::debug("Server already clear all status, then start jobs...");
+                registerStatuses();
                 _proxy->sendRequestAsync<update_status_request>();
             }
             else
@@ -69,22 +99,36 @@ public:
                       " microseconds");
     }
 
+    void registerStatuses()
+    {
+        registerStatus<compliance5::status>();
+        registerStatus<compliance4::status>();
+        registerStatus<compliance3::status>();
+        registerStatus<compliance2::status>();
+        registerStatus<compliance1::status>();
+    }
+
+    template <class status>
     void registerStatus()
     {
         auto dumpCallback = [this](const auto& status) {
             Logger::debug("Got status update from server[",
-                          status->operationID(), "]: ", status->updated_count());
+                          status->operationID(), "]: ", status->get_updated_count());
             if(status->operationID() == compliance1::ID)
             {
                 this->getStatuses();
             }
         };
 
-        _proxy->registerStatus<compliance5::status>(dumpCallback);
-        _proxy->registerStatus<compliance4::status>(dumpCallback);
-        _proxy->registerStatus<compliance3::status>(dumpCallback);
-        _proxy->registerStatus<compliance2::status>(dumpCallback);
-        _proxy->registerStatus<compliance1::status>(dumpCallback);
+        RegID regid = _proxy->registerStatus<status>(dumpCallback);
+        if(regid.valid())
+        {
+            _regids.push_back(std::move(regid));
+        }
+        else
+        {
+            Logger::error("Failed to register property ", status::operationID());
+        }
     }
 
     void getStatuses()
@@ -97,8 +141,9 @@ public:
 
     void registerSignal()
     {
-        _proxy->registerSignal<server_arbittrary_request>([]{
-            Logger::debug("Received ", server_arbittrary_request::ID,
+        _proxy->registerSignal<server_request_signal>(
+            [](){
+            Logger::debug("Received ", server_request_signal::ID,
                           " from server");
         });
 
@@ -118,12 +163,23 @@ public:
     void tryStopServer()
     {
         using namespace weather_service;
-        auto lastBootTime = _proxy->getStatus<boot_time::status>();
-        Logger::debug("server life is ", lastBootTime->seconds());
-        if (lastBootTime->seconds() > 10)
+        if(auto lastBootTime = _proxy->getStatus<boot_time::status>())
         {
-            _proxy->sendRequest<shutdown>();
-            Logger::debug("Server already shutdown!");
+            Logger::debug("server life is ", lastBootTime->get_seconds());
+            if (lastBootTime->get_seconds() > 10)
+            {
+                if(auto response = _proxy->sendRequest<shutdown>())
+                {
+                    if(response->isError())
+                    {
+                        Logger::error("Failed to shutdown server: ", response->getError()->description());
+                    }
+                    else
+                    {
+                        Logger::debug("Server already shutdown!");
+                    }
+                }
+            }
         }
         stop();
     }
@@ -137,7 +193,7 @@ public:
             {
                 maf::Logger::debug("Got update from server, status id = ",
                                    status::operationID(),
-                                   compliance5->updated_count()
+                                   compliance5->get_updated_count()
                                    );
             }
             else
@@ -152,6 +208,7 @@ private:
     Timer _timer;
     std::shared_ptr<Proxy> _proxy;
     std::function<void()> _nextStep;
+    std::vector<RegID> _regids;
     ServiceID _sid;
 };
 
@@ -161,9 +218,12 @@ int main()
 {
     maf::Logger::init(
         maf::logging::LOG_LEVEL_DEBUG |
-        maf::logging::LOG_LEVEL_ERROR,
+        maf::logging::LOG_LEVEL_FROM_INFO,
         [](const std::string& msg) {
             std::cout << msg << std::endl;
+        },
+        [](const std::string& msg) {
+            std::cerr << msg << std::endl;
         }
         );
 
