@@ -427,6 +427,20 @@ void testITC() {
   tester.test();
 }
 
+void testITCSerialization() {
+  using ParamTrait = localipc::ParamTrait;
+  maf::test::log_rec() << "--------------START INTER THREAD COMMUNICATION "
+                          "USING SERIALIZATION TEST "
+                          "--------------------";
+
+  auto proxy = BasicProxy<localipc::ParamTrait>::createProxy(
+      "itc.messaging.maf", {}, ServiceIDTest);
+  auto stub = BasicStub<localipc::ParamTrait>::createStub("itc.messaging.maf",
+                                                          {}, ServiceIDTest);
+  Tester<ParamTrait> tester{stub, proxy};
+  tester.test();
+}
+
 static maf::util::TimeMeasurement tm([](auto elapsed) {
   std::cout << "Total time = " << elapsed.count() / 1000 << "ms";
 });
@@ -440,5 +454,6 @@ int main() {
   maf::test::init_test_cases();
   testLocalIPC();
   testITC();
+  testITCSerialization();
   return 0;
 }

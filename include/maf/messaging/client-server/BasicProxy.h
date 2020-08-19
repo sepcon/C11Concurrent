@@ -153,13 +153,9 @@ class BasicProxy {
   ExecutorPtr executor_;
 };
 
-#ifndef MAF_NO_STATIC_OPERATION_ID
-#define MAF_ASSERT_SAME_OPERATION_ID(Input, OutputOrRequest)         \
+#define mc_maf_cs_assert_same_opid(Input, OutputOrRequest)           \
   static_assert(PTrait::template IsSameOpID<Input, OutputOrRequest>, \
                 "Input and Request/Output must have same OpID");
-#else
-#define MAF_ASSERT_SAME_OPERATION_ID(Input, OutputOrRequest)
-#endif
 
 template <class PTrait>
 std::shared_ptr<BasicProxy<PTrait>> BasicProxy<PTrait>::createProxy(
@@ -428,7 +424,7 @@ RegID BasicProxy<PTrait>::sendRequestAsync(
     const std::shared_ptr<Input> &input,
     ResponseProcessingCallback<RequestOrOutput> callback,
     ActionCallStatus *callStatus) noexcept {
-  MAF_ASSERT_SAME_OPERATION_ID(Input, RequestOrOutput);
+  mc_maf_cs_assert_same_opid(Input, RequestOrOutput);
 
   return requester_->sendRequestAsync(
       getOpID<RequestOrOutput>(), translate(input),
@@ -454,7 +450,7 @@ typename BasicProxy<PTrait>::template Response<RequestOrOutput>
 BasicProxy<PTrait>::sendRequest(const std::shared_ptr<Input> &input,
                                 ActionCallStatus *callStatus,
                                 RequestTimeoutMs timeout) noexcept {
-  MAF_ASSERT_SAME_OPERATION_ID(Input, RequestOrOutput);
+  mc_maf_cs_assert_same_opid(Input, RequestOrOutput);
   return sendRequest<RequestOrOutput>(getOpID<RequestOrOutput>(),
                                       translate(input), callStatus, timeout);
 }

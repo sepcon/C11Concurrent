@@ -22,10 +22,9 @@ class RequestT {
   static_assert(IsOutput<PTrait, Output>,    \
                 "the param must be a kind of output or status")
 
-#define mc_maf_reqt_assert_is_same_opid(Output, Input) /* \
-static_assert(PTrait::template getOperationID<Input>() == \
-PTrait::template getOperationID<Output>(),                \
-"Output class must has same operationID as Input")*/
+#define mc_maf_reqt_assert_is_same_opid(Output, Input)      \
+  static_assert(PTrait::template IsSameOpID<Input, Output>, \
+                "Output class must has same operationID as Input")
 
   RequestT(std::shared_ptr<RequestIF> delegate)
       : delegate_(std::move(delegate)) {}
