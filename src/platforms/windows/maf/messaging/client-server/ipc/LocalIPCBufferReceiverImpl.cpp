@@ -5,6 +5,7 @@
 #include <maf/logging/Logger.h>
 
 #include "PipeShared.h"
+#include "LocalIPCReceiverStatusMonitor.h"
 
 #define MAX_INSTANCES 10
 #define PIPE_TIMEOUT 5000

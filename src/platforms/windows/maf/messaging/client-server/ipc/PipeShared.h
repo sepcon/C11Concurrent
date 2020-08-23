@@ -7,9 +7,10 @@
 namespace maf {
 namespace messaging {
 namespace ipc {
+namespace local {
 
 inline constexpr int WAIT_DURATION_MAX = 5000;  // milliseconds
-inline constexpr int BUFFER_SIZE = 1000;         // bytes
+inline constexpr int BUFFER_SIZE = 1000;        // bytes
 
 using ByteArrayPtr = std::shared_ptr<srz::Buffer>;
 using PipeNameType = std::string;
@@ -29,6 +30,7 @@ struct AutoCloseHandle {
   HANDLE _h;
 };
 
+}  // namespace local
 }  // namespace ipc
 }  // namespace messaging
 }  // namespace maf

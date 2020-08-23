@@ -10,9 +10,9 @@
 #include "PipeShared.h"
 
 namespace maf {
-
 namespace messaging {
 namespace ipc {
+namespace local {
 
 class NamedPipeReceiverBase {
  public:
@@ -57,6 +57,7 @@ class NamedPipeReceiverBase {
   std::atomic_bool stopped_;
 };
 
+}  // namespace local
 }  // namespace ipc
 }  // namespace messaging
 }  // namespace maf

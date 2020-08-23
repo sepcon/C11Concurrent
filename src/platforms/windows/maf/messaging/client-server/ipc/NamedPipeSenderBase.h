@@ -8,9 +8,9 @@
 #include "PipeShared.h"
 
 namespace maf {
-
 namespace messaging {
 namespace ipc {
+namespace local {
 
 class NamedPipeSenderBase {
  public:
@@ -29,12 +29,12 @@ class NamedPipeSenderBase {
       receiverAddress_ = receiverAddr;
       pipeName_ = constructPipeName(receiverAddr);
     }
-    return WaitNamedPipeA(pipeName_.c_str(), 0)
-               ? Availability::Available
-               : Availability::Unavailable;
+    return WaitNamedPipeA(pipeName_.c_str(), 0) ? Availability::Available
+                                                : Availability::Unavailable;
   }
 };
 
+}  // namespace local
 }  // namespace ipc
 }  // namespace messaging
 }  // namespace maf

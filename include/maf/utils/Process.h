@@ -4,7 +4,7 @@ namespace maf {
 namespace util {
 namespace process {
 
-using ProcessID = int;
+using ProcessID = unsigned long long;
 
 ProcessID pid();
 
