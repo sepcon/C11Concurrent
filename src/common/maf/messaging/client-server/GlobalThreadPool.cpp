@@ -17,30 +17,23 @@ struct ThePool {
   ThePool() {}
   ~ThePool() {}
 
-  void init() { details = Component::create(); }
+  void init() { comp_ = Component::create(); }
 
-  void deinit() {
-    details->stop();
-    auto atThreads = threads.atomic();
-    for (auto& th : *atThreads) {
-      if (th.joinable()) {
-        th.join();
-      }
-    }
-    atThreads->clear();
-  }
+  void deinit() { comp_->stop(); }
 
-  auto threadCount() { return threads.atomic()->size(); }
+  auto threadCount() { return threadCount_; }
 
   bool tryAddThread() {
     try {
-      threads.atomic()->emplace_back([this] {
+      std::thread{[this] {
         try {
-          this->details->run();
+          comp_->run();
         } catch (const ThreadInterupt&) {
           MAF_LOGGER_INFO("Thread id ", std::this_thread::get_id(), " stopped");
+          --threadCount_;
         }
-      });
+      }}.detach();
+      ++threadCount_;
       return true;
     } catch (const std::exception& e) {
       MAF_LOGGER_ERROR("Failed to add new thread to global thread pool: ",
@@ -50,20 +43,18 @@ struct ThePool {
   }
 
   bool tryRemoveThread() {
-    return details->execute([] { throw ThreadInterupt{}; });
+    return comp_->execute([] { throw ThreadInterupt{}; });
   }
 
-  ComponentInstance details;
-  threading::Lockable<std::vector<std::thread>> threads;
+  ComponentInstance comp_;
+  size_t threadCount_ = 0;
 };
 static ThePool& thepool() {
   static ThePool _;
   return _;
 }
 
-bool submit(TaskType task) {
-  return thepool().details->execute(std::move(task));
-}
+bool submit(TaskType task) { return thepool().comp_->execute(std::move(task)); }
 
 bool tryAddThread() { return thepool().tryAddThread(); }
 
