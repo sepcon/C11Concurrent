@@ -39,9 +39,12 @@ bool ServiceRequester::onIncomingMessage(const CSMessagePtr &csMsg) {
         }
       } break;
 
-      case OpCode::Request:
+      case OpCode::Respond:
       case OpCode::StatusGet:
-        onRequestResult(csMsg);
+        onRequestResponded(csMsg);
+        break;
+      case OpCode::Reply:
+        onRequestReplied(csMsg);
         break;
       default:
         handled = false;
@@ -61,8 +64,7 @@ ServiceRequester::ServiceRequester(const ServiceID &sid,
     : client_(std::move(client)), sid_(sid) {}
 
 ServiceRequester::~ServiceRequester() {
-  MAF_LOGGER_INFO("Clean up service requester of service id: ", serviceID(),
-                  "...");
+  MAF_LOGGER_INFO("Clean up service requester of service id: ", sid_, "...");
 }
 
 RegID ServiceRequester::sendRequestAsync(const OpID &opID,
@@ -105,13 +107,8 @@ void ServiceRequester::abortRequest(const RegID &regID,
   if (found) {
     auto msg = this->createCSMessage(regID.opID, OpCode::Abort);
     msg->setRequestID(regID.requestID);
-    auto status = sendMessageToServer(msg);
-
-    if (status == ActionCallStatus::Success) {
-      RegID::reclaimID(regID, idMgr_);
-    }
-
-    assign_ptr(callStatus, status);
+    assign_ptr(callStatus, sendMessageToServer(msg));
+    RegID::reclaimID(regID, idMgr_);
   }
 }
 
@@ -189,7 +186,12 @@ CSPayloadIFPtr ServiceRequester::sendMessageSync(
   auto resultFuture = asyncResponse->get_future();
   auto onSyncMsgCallback =
       [asyncResponse = move(asyncResponse)](const CSPayloadIFPtr &msg) {
-        asyncResponse->set_value(msg);
+        try {
+          asyncResponse->set_value(msg);
+          return true;
+        } catch (const std::future_error &) {
+          return false;
+        }
       };
 
   auto regID = sendMessageAsync(operationID, opCode, msgContent,
@@ -297,7 +299,10 @@ RegID ServiceRequester::registerNotification(const OpID &opID, OpCode opCode,
     assign_ptr(callStatus, status);
   } else if (opCode == OpCode::StatusRegister) {
     if (auto cachedProperty = getCachedProperty(opID)) {
-      callback(cachedProperty);
+      if (!callback(cachedProperty)) {
+        removeRegEntry(registerEntriesMap_, regID);
+        regID.clear();
+      }
     }
     assign_ptr(callStatus, ActionCallStatus::Success);
   }
@@ -339,8 +344,9 @@ ActionCallStatus ServiceRequester::unregister(const RegID &regID) {
     callstatus = ActionCallStatus::ServiceUnavailable;
   } else if (regID.valid()) {
     auto propertyID = regID.opID;
-    auto totalRemainer = removeRegEntry(registerEntriesMap_, regID);
-    if (totalRemainer == 0) {
+
+    if (auto totalRemainer = removeRegEntry(registerEntriesMap_, regID);
+        totalRemainer == 0) {
       // send unregister if no one from client side interested
       // in this propertyID anymore
       removeCachedProperty(propertyID);
@@ -359,6 +365,8 @@ ActionCallStatus ServiceRequester::unregisterAll(const OpID &propertyID) {
   if (serviceUnavailable()) {
     callstatus = ActionCallStatus::ServiceUnavailable;
   } else {
+    MAF_LOGGER_INFO("All subcribers of property `", propertyID,
+                    " will be removed");
     registerEntriesMap_.atomic()->erase(propertyID);
     sendMessageToServer(createCSMessage(propertyID, OpCode::Unregister));
     removeCachedProperty(propertyID);
@@ -398,33 +406,56 @@ ActionCallStatus ServiceRequester::getStatus(
 }
 
 bool ServiceRequester::onRegistersUpdated(const CSMessagePtr &msg) {
-  std::vector<decltype(RegEntry::callback)> callbacks;
-
+  using namespace std;
+  list<RegEntry> callbacks;
+  vector<RequestID> unhandledRequestIDs;
   {
     std::lock_guard lock(registerEntriesMap_);
     auto it = registerEntriesMap_->find(msg->operationID());
     if (it != registerEntriesMap_->end()) {
-      for (auto &regEntry : it->second) {
-        callbacks.push_back(regEntry.callback);
-      }
+      callbacks = it->second;
     }
   }
 
   if (auto payload = msg->payload()) {
-    for (auto &callback : callbacks) {
+    for (auto &[requestID, callback] : callbacks) {
       // the payload must be cloned here due to state of
       // IByteStream will change if deserialize it
-      callback(CSPayloadIFPtr(payload->clone()));
+      if (!callback(CSPayloadIFPtr(payload->clone()))) {
+        unhandledRequestIDs.push_back(requestID);
+      }
     }
   } else {
-    for (auto &callback : callbacks) {
-      callback(payload);
+    for (auto &[requestID, callback] : callbacks) {
+      if (!callback(payload)) {
+        unhandledRequestIDs.push_back(requestID);
+      }
     }
   }
-  return !callbacks.empty();
+
+  auto stillHaveObserver = !callbacks.empty();
+  if (!unhandledRequestIDs.empty()) {
+    lock_guard lock(registerEntriesMap_);
+    auto it = registerEntriesMap_->find(msg->operationID());
+    if (it != registerEntriesMap_->end()) {
+      for (auto requestID : unhandledRequestIDs) {
+        it->second.remove_if([requestID](const RegEntry &regEntry) {
+          return regEntry.requestID == requestID;
+        });
+      }
+      if (it->second.empty()) {
+        registerEntriesMap_->erase(it);
+        stillHaveObserver = false;
+      } else {
+        stillHaveObserver = true;
+      }
+    }
+  }
+
+  return stillHaveObserver;
 }
 
-void ServiceRequester::onRequestResult(const CSMessagePtr &msg) {
+void ServiceRequester::onRequestResponded(const CSMessagePtr &msg) {
   decltype(RegEntry::callback) callback;
   {
     std::lock_guard lock(requestEntriesMap_);
@@ -458,6 +489,42 @@ void ServiceRequester::onRequestResult(const CSMessagePtr &msg) {
 
   if (callback) {
     callback(msg->payload());
+  }
+}
+
+void ServiceRequester::onRequestReplied(const CSMessagePtr &msg) {
+  decltype(RegEntry::callback) callback;
+  {
+    std::lock_guard lock(requestEntriesMap_);
+    auto it = requestEntriesMap_->find(msg->operationID());
+    if (it != requestEntriesMap_->end()) {
+      auto &regEntries = it->second;
+      for (auto itRegEntry = regEntries.begin(); itRegEntry != regEntries.end();
+           ++itRegEntry) {
+        if (itRegEntry->requestID == msg->requestID()) {
+          callback = itRegEntry->callback;
+          break;
+        }
+      }
+    }
+  }
+
+  auto responseHandled = false;
+  if (callback) {
+    responseHandled = callback(msg->payload());
+  } else {
+    MAF_LOGGER_WARN(
+        "The request entry for request "
+        "OpID [",
+        msg->operationID(),
+        "] - "
+        "RequestiD[",
+        msg->requestID(),
+        "] "
+        "could not be found!");
+  }
+  if (!responseHandled) {
+    abortRequest(RegID{msg->operationID(), msg->requestID()}, nullptr);
   }
 }
 

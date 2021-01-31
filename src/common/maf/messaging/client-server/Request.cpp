@@ -31,30 +31,12 @@ bool Request::valid() const {
   return _valid;
 }
 
-ActionCallStatus Request::respond(const CSPayloadIFPtr &answer) {
-  std::unique_lock lock(_mutex);
-  if (_valid) {
-    // set invalid here to avoid others from sending another reponse
-    // while sending the current one is being sent to client
-    _valid = false;
+ActionCallStatus Request::respond(const CSPayloadIFPtr &response) {
+  return respond_(response, &ServiceProviderIF::respondToRequest);
+}
 
-    auto replyMsg = std::make_shared<CSMessage>(*_csMsg);
-    replyMsg->setPayload(answer);
-
-    if (auto stub = _svStub.lock()) {
-      // unlock to avoid deadlock when stub tries to invalidate this request
-      // and to avoid other thread from waiting for lock during message sending
-      lock.unlock();
-      return stub->respondToRequest(replyMsg);
-    } else {
-      return ActionCallStatus::ReceiverUnavailable;
-    }
-
-  } else {
-    MAF_LOGGER_ERROR("Request is no longer valid, might be the operation id [",
-                     _csMsg->operationID(), "]");
-    return ActionCallStatus::InvalidCall;
-  }
+ActionCallStatus Request::reply(const CSPayloadIFPtr &response) {
+  return respond_(response, &ServiceProviderIF::replyToRequest);
 }
 
 CSPayloadIFPtr Request::getInput() {
@@ -87,17 +69,37 @@ RequestID Request::getRequestID() const {
   return _csMsg->requestID();
 }
 
-ActionCallStatus Request::sendMsgBackToClient() {
-  if (auto stub = _svStub.lock()) {
-    return stub->respondToRequest(_csMsg);
-  } else {
-    return ActionCallStatus::ReceiverUnavailable;
-  }
-}
-
 void Request::setOperationCode(OpCode opCode) {
   std::lock_guard lock(_mutex);
   _csMsg->setOperationCode(opCode);
+}
+
+ActionCallStatus Request::respond_(
+    const CSPayloadIFPtr &response,
+    ActionCallStatus (ServiceProviderIF::*respondMethod)(
+        const CSMessagePtr &)) {
+  std::unique_lock lock(_mutex);
+  if (_valid) {
+    // set invalid here to avoid others from sending another reponse
+    // while sending the current one is being sent to client
+    _valid = false;
+
+    if (auto stub = _svStub.lock()) {
+      auto replyMsg = std::make_shared<CSMessage>(*_csMsg);
+      replyMsg->setPayload(response);
+      // unlock to avoid deadlock when stub tries to invalidate this request
+      // and to avoid other thread from waiting for lock during message sending
+      lock.unlock();
+      return (*stub.*respondMethod)(replyMsg);
+    } else {
+      return ActionCallStatus::ReceiverUnavailable;
+    }
+
+  } else {
+    MAF_LOGGER_ERROR("Request is no longer valid, might be the operation id [",
+                     _csMsg->operationID(), "]");
+    return ActionCallStatus::InvalidCall;
+  }
 }
 
 }  // namespace messaging

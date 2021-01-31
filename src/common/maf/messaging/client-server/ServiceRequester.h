@@ -109,7 +109,8 @@ struct ServiceRequester : public ServiceRequesterIF {
                                const CSPayloadIFPtr &msgContent = nullptr);
 
   bool onRegistersUpdated(const CSMessagePtr &msg);
-  void onRequestResult(const CSMessagePtr &msg);
+  void onRequestResponded(const CSMessagePtr &msg);
+  void onRequestReplied(const CSMessagePtr &msg);
   void clearAllRequests();
   void clearAllRegisterEntries();
   ActionCallStatus sendMessageToServer(const CSMessagePtr &outgoingMsg);

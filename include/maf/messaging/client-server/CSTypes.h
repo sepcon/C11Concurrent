@@ -2,6 +2,7 @@
 
 #include <maf/utils/StringifyableEnum.h>
 #include <stdint.h>
+
 #include <string>
 
 // clang-format off
@@ -28,6 +29,8 @@ MC_MAF_STRINGIFYABLE_ENUM(OpCode, char,
     RegisterServiceStatus,
     UnregisterServiceStatus,
     ServiceStatusUpdate,
+    Reply,
+    Respond,
 //  Unhandle
     Invalid
 )
@@ -39,5 +42,5 @@ constexpr OpIDConst OpID_ServiceAvailable    = "service_available.property";
 constexpr OpIDConst OpID_ServiceUnavailable  = "service_unavailable.property";
 
 // clang-format on
-} // messaging
-} // maf
+}  // namespace messaging
+}  // namespace maf

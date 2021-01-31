@@ -8,7 +8,7 @@
 namespace maf {
 namespace messaging {
 
-using CSPayloadProcessCallback = std::function<void(const CSPayloadIFPtr &)>;
+using CSPayloadProcessCallback = std::function<bool(const CSPayloadIFPtr &)>;
 
 }  // namespace messaging
 }  // namespace maf

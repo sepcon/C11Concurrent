@@ -10,6 +10,11 @@
 
 namespace maf {
 namespace messaging {
+using std::shared_ptr;
+using RequestPtr = shared_ptr<Request>;
+namespace _ {
+static void abortRequest(const RequestPtr &request);
+}
 
 bool ServiceProvider::onIncomingMessage(const CSMessagePtr &msg) {
   MAF_LOGGER_INFO(
@@ -43,7 +48,7 @@ bool ServiceProvider::onIncomingMessage(const CSMessagePtr &msg) {
       break;
     default:
       handled = false;
-      MAF_LOGGER_WARN("Unhandled OpCode: ", msg->operationCode());
+      MAF_LOGGER_WARN("Unhandled OpCode::", msg->operationCode());
       break;
   }
   return handled;
@@ -61,9 +66,17 @@ ServiceProvider::~ServiceProvider() {
 
 const ServiceID &ServiceProvider::serviceID() const { return sid_; }
 
+Availability ServiceProvider::availability() const { return availability_; }
+
+ActionCallStatus ServiceProvider::replyToRequest(const CSMessagePtr &csMsg) {
+  csMsg->setOperationCode(OpCode::Reply);
+  return sendBackMessageToClient(csMsg);
+}
+
 ActionCallStatus ServiceProvider::respondToRequest(const CSMessagePtr &csMsg) {
   if (auto request = pickOutRequestInfo(csMsg)) {
     request->invalidate();
+    csMsg->setOperationCode(OpCode::Respond);
     return sendBackMessageToClient(csMsg);
   } else {
     return ActionCallStatus::FailedUnknown;
@@ -161,8 +174,6 @@ CSPayloadIFPtr ServiceProvider::getStatus(const OpID &propertyID) {
   }
 }
 
-Availability ServiceProvider::availability() const { return availability_; }
-
 void ServiceProvider::startServing() {
   availability_ = Availability::Available;
   if (auto server = server_.lock()) {
@@ -235,10 +246,7 @@ void ServiceProvider::invalidateAndRemoveAllRequests() {
   std::lock_guard lock(requestsMap_);
   for (auto &[opID, requests] : *requestsMap_) {
     for (auto &request : requests) {
-      request->invalidate();
-      if (auto abortCallback = request->getAbortCallback()) {
-        abortCallback();
-      }
+      _::abortRequest(request);
     }
   }
   regEntriesMap_->clear();
@@ -261,15 +269,7 @@ void ServiceProvider::removeRegistersOfAddress(const Address &addr) {
 }
 
 void ServiceProvider::onRequestAborted(const CSMessagePtr &msg) {
-  if (auto request = pickOutRequestInfo(msg)) {
-    // Invalidate request then later respond from request itself
-    // will not cause any race condition.
-    // Must be considered carefully for bug fixing later
-    request->invalidate();
-    if (auto abortCallback = request->getAbortCallback()) {
-      abortCallback();
-    }
-  }
+  _::abortRequest(pickOutRequestInfo(msg));
 }
 
 void ServiceProvider::onActionRequest(const CSMessagePtr &msg) {
@@ -332,6 +332,20 @@ RequestHandlerFunction ServiceProvider::getRequestHandlerCallback(
   }
   return {};
 }
+
+namespace _ {
+static void abortRequest(const RequestPtr &request) {
+  if (request) {
+    // Invalidate request then later respond from request itself
+    // will not cause any race condition.
+    // Must be considered carefully for bug fixing later
+    request->invalidate();
+    if (auto abortCallback = request->getAbortCallback()) {
+      abortCallback();
+    }
+  }
+}
+}  // namespace _
 
 }  // namespace messaging
 }  // namespace maf

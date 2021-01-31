@@ -11,7 +11,6 @@ namespace messaging {
 class RequestIF;
 
 using AbortRequestCallback = std::function<void(void)>;
-using CSPayloadProcessCallback = std::function<void(const CSPayloadIFPtr &)>;
 using RequestHandlerFunction =
     std::function<void(const std::shared_ptr<RequestIF> &)>;
 

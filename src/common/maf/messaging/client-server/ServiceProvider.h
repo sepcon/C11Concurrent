@@ -34,6 +34,7 @@ class ServiceProvider : public ServiceProviderIF,
   const ServiceID &serviceID() const override;
   Availability availability() const override;
 
+  ActionCallStatus replyToRequest(const CSMessagePtr &csMsg) override;
   ActionCallStatus respondToRequest(const CSMessagePtr &csMsg) override;
 
   CSPayloadIFPtr getStatus(const OpID &propertyID) override;

@@ -3,6 +3,7 @@
 #include <maf/logging/Logger.h>
 #include <maf/messaging/client-server/CSMgmt.h>
 #include <maf/messaging/client-server/ParamTranslatingStatus.h>
+#include <maf/messaging/client-server/ServiceRequesterIF.h>
 #include <maf/utils/ExecutorIF.h>
 #include <maf/utils/Pointers.h>
 
@@ -33,6 +34,8 @@ class BasicProxy {
   using ServiceStatusChangedCallback =
       ServiceStatusObserverDelegater::DelegateCallback;
 
+  using IgnoreInputCallback = std::function<void()>;
+
   using ExecutorIFPtr = util::ExecutorIFPtr;
   using ServiceStatusObserverPtr = std::shared_ptr<ServiceStatusObserverIF>;
   using RequesterPtr = std::shared_ptr<ServiceRequesterIF>;
@@ -40,6 +43,8 @@ class BasicProxy {
       const ConnectionType &contype, const Address &addr, const ServiceID &sid,
       ExecutorIFPtr executor = {},
       ServiceStatusObserverPtr statusObsv = {}) noexcept;
+
+  static inline constexpr auto InfiniteDuration = RequestTimeoutMs{0};
 
   const ServiceID &serviceID() const noexcept;
   Availability serviceStatus() const noexcept;
@@ -53,16 +58,16 @@ class BasicProxy {
                        ActionCallStatus *callStatus = nullptr) noexcept;
 
   template <class Signal, AllowOnlySignalT<PTrait, Signal> = true>
-  RegID registerSignal(std::function<void()> callback,
+  RegID registerSignal(IgnoreInputCallback callback,
                        ActionCallStatus *callStatus = nullptr) noexcept;
 
   ActionCallStatus unregister(const RegID &regID) noexcept;
   ActionCallStatus unregisterAll(const OpID &propertyID) noexcept;
 
   template <class Status, AllowOnlyStatusT<PTrait, Status> = true>
-  std::shared_ptr<Status> getStatus(ActionCallStatus *callStatus = nullptr,
-                                    RequestTimeoutMs timeout = RequestTimeoutMs{
-                                        0}) noexcept;
+  std::shared_ptr<Status> getStatus(
+      ActionCallStatus *callStatus = nullptr,
+      RequestTimeoutMs timeout = InfiniteDuration) noexcept;
 
   template <class Status, AllowOnlyStatusT<PTrait, Status> = true>
   ActionCallStatus getStatus(
@@ -88,13 +93,13 @@ class BasicProxy {
   Response<RequestOrOutput> sendRequest(
       const std::shared_ptr<Input> &requestInput,
       ActionCallStatus *callStatus = nullptr,
-      RequestTimeoutMs timeout = RequestTimeoutMs{0}) noexcept;
+      RequestTimeoutMs timeout = InfiniteDuration) noexcept;
 
   template <class RequestOrOutput,
             AllowOnlyRequestOrOutputT<PTrait, RequestOrOutput> = true>
   Response<RequestOrOutput> sendRequest(
       ActionCallStatus *callStatus = nullptr,
-      RequestTimeoutMs timeout = RequestTimeoutMs{0}) noexcept;
+      RequestTimeoutMs timeout = InfiniteDuration) noexcept;
 
   void abortRequest(const RegID &regID, ActionCallStatus *callStatus = nullptr);
 
@@ -213,7 +218,8 @@ template <class PTrait>
 std::shared_ptr<ServiceStatusObserverIF>
 BasicProxy<PTrait>::onServiceStatusChanged(
     ServiceStatusChangedCallback callback) noexcept {
-  if (executor_ && callback) {
+  assert(executor_ && "Executor must not be null");
+  if (executor_) {
     // make shared might throw?
     auto observer = std::make_shared<ServiceStatusObserverDelegater>(
         executor_, std::move(callback));
@@ -227,22 +233,34 @@ template <class PTrait>
 template <class CSParam>
 CSPayloadProcessCallback BasicProxy<PTrait>::createResponseMsgHandlerCallback(
     ResponseProcessingCallback<CSParam> callback) noexcept {
+  using namespace std;
   if (callback) {
+    assert(executor_ && "Executor must not be null");
     if (executor_) {
-      return [callback = std::move(callback), executor = this->executor_](
-                 const CSPayloadIFPtr &payload) mutable {
-        executor->execute([payload, callback = std::move(callback)] {
-          // getResposne must be called on thread of executor
-          // try not block thread of service requester untill
-          // finish translating message
-          callback(getResposne<CSParam>(payload));
-        });
+      auto callbackPtr =
+          make_shared<ResponseProcessingCallback<CSParam>>(move(callback));
+      return [callbackPtr = std::move(callbackPtr),
+              wexecutor =
+                  weak_ptr{executor_}](const CSPayloadIFPtr &payload) mutable {
+        if (auto executor = wexecutor.lock()) {
+          executor->execute([payload, callbackPtr = std::move(callbackPtr)] {
+            // getResposne must be called on thread of executor
+            // try not block thread of service requester untill
+            // finish translating message
+            (*callbackPtr)(getResposne<CSParam>(payload));
+          });
+          return true;
+        }
+        return false;
       };
     } else {
       MAF_LOGGER_ERROR("Executer for Stub of service id `",
                        requester_->serviceID(),
                        "` has not been set yet(nullptr)!");
     }
+  } else {
+    MAF_LOGGER_INFO("Ignore reponse of request `",
+                    PTrait::template getOperationID<CSParam>());
   }
   return {};
 }
@@ -251,13 +269,22 @@ template <class PTrait>
 template <class CSParam>
 CSPayloadProcessCallback BasicProxy<PTrait>::createUpdateMsgHandlerCallback(
     NotificationProcessingCallback<CSParam> callback) noexcept {
+  using namespace std;
   if (callback) {
+    assert(executor_ && "Executor must not be null");
     if (executor_) {
-      return [callback = std::move(callback), executor = this->executor_](
+      auto callbackPtr = make_shared<NotificationProcessingCallback<CSParam>>(
+          std::move(callback));
+      return [callbackPtr{move(callbackPtr)}, wexecutor = weak_ptr{executor_}](
                  const CSPayloadIFPtr &payload) mutable {
-        executor->execute([payload, callback = std::move(callback)] {
-          callback(convert<CSParam>(payload));
-        });
+        if (auto executor = wexecutor.lock()) {
+          executor->execute([payload, callbackPtr = std::move(callbackPtr)] {
+            (*callbackPtr)(convert<CSParam>(payload));
+          });
+          return true;
+        } else {
+          return false;
+        }
       };
     } else {
       MAF_LOGGER_ERROR("Executer for Stub of service id `",
@@ -367,28 +394,27 @@ RegID BasicProxy<PTrait>::registerSignal(
 template <class PTrait>
 template <class Signal, AllowOnlySignalT<PTrait, Signal>>
 RegID BasicProxy<PTrait>::registerSignal(
-    std::function<void()> callback, ActionCallStatus *callStatus) noexcept {
-  auto signalID = getOpID<Signal>();
-  if (callback) {
-    if (executor_) {
-      auto asyncHandler = [signalID, callback = std::move(callback),
-                           executor = this->executor_](const auto &) {
-        executor->execute(std::move(callback));
-      };
-
-      return requester_->registerSignal(signalID, std::move(asyncHandler),
-                                        callStatus);
-    } else {
-      MAF_LOGGER_ERROR("Executer for BasicProxy of service id `",
-                       requester_->serviceID(),
-                       "` has not been set yet(nullptr)!");
-    }
+    IgnoreInputCallback callback, ActionCallStatus *callStatus) noexcept {
+  using namespace std;
+  assert(executor_ && "Executor must not be null");
+  if (executor_) {
+    auto asyncHandler = [callback{move(callback)},
+                         wexecutor = weak_ptr{executor_}](const auto &) {
+      if (auto executor = wexecutor.lock()) {
+        executor->execute(move(callback));
+        return true;
+      } else {
+        return false;
+      }
+    };
+    return requester_->registerSignal(getOpID<Signal>(), move(asyncHandler),
+                                      callStatus);
   } else {
-    MAF_LOGGER_ERROR("Registering signal id[, ", signalID,
-                     "] failed, Please provide non-empty callback");
+    MAF_LOGGER_ERROR("Executer for BasicProxy of service id `",
+                     requester_->serviceID(),
+                     "` has not been set yet(nullptr)!");
+    return {};
   }
-
-  return {};
 }
 
 template <class PTrait>

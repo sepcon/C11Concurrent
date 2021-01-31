@@ -1,6 +1,8 @@
 #include <maf/logging/Logger.h>
 #include <maf/messaging/client-server/CSMgmt.h>
 
+#include <maf/messaging/client-server/ServiceProviderIF.h>
+#include <maf/messaging/client-server/ServiceRequesterIF.h>
 #include "ClientFactory.h"
 #include "SingleThreadPool.h"
 #include "ServerFactory.h"

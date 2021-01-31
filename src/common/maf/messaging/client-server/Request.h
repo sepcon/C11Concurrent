@@ -23,15 +23,20 @@ class Request : public RequestIF {
           std::weak_ptr<ServiceProviderIF> svStub);
   bool invalidate();
   AbortRequestCallback getAbortCallback();
-  ActionCallStatus sendMsgBackToClient();
   void setOperationCode(OpCode opCode);
+
+  ActionCallStatus respond_(
+      const CSPayloadIFPtr &response,
+      ActionCallStatus (ServiceProviderIF::*respondMethod)(
+          const CSMessagePtr &csMsg));
 
  public:
   OpCode getOperationCode() const override;
   const OpID &getOperationID() const override;
   RequestID getRequestID() const override;
   bool valid() const override;
-  ActionCallStatus respond(const CSPayloadIFPtr &answer) override;
+  ActionCallStatus respond(const CSPayloadIFPtr &response) override;
+  ActionCallStatus reply(const CSPayloadIFPtr &response) override;
   CSPayloadIFPtr getInput() override;
   void onAborted(AbortRequestCallback abortCallback) override;
 };

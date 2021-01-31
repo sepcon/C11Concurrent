@@ -152,19 +152,24 @@ template <class RequestOrInput,
           AllowOnlyRequestOrInputT<PTrait, RequestOrInput>>
 bool BasicStub<PTrait>::registerRequestHandler(
     RequestHandlerFunction<RequestOrInput> handlerFunction) {
+  using namespace std;
+  assert(executor_);
   if (executor_) {
-    auto requestHandler =
-        [handlerFunction = std::move(handlerFunction), executor = executor_](
-            const std::shared_ptr<RequestIF> &request) mutable {
-          executor->execute([request = request,
-                             callback = std::move(handlerFunction)]() mutable {
-            callback(Request<RequestOrInput>{std::move(request)});
-          });
-        };
+    auto requestHandler = [handlerFunction = move(handlerFunction),
+                           wexecutor = weak_ptr{executor_}](
+                              const shared_ptr<RequestIF> &request) mutable {
+      if (auto executor = wexecutor.lock()) {
+        return executor->execute(
+            [request = request, callback = move(handlerFunction)]() mutable {
+              callback(Request<RequestOrInput>{move(request)});
+            });
+      }
+      return false;
+    };
 
     return provider_->registerRequestHandler(
         PTrait::template getOperationID<RequestOrInput>(),
-        std::move(requestHandler));
+        move(requestHandler));
   } else {
     MAF_LOGGER_ERROR("Executer for BasicStub of service id `",
                      provider_->serviceID(),

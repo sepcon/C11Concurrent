@@ -51,6 +51,9 @@ PROPERTY(some_string)
     STATUS((std::string, its_status))
 ENDPROPERTY()
 
+PROPERTY(no_crash_string)
+    STATUS((std::string, its_status))
+ENDPROPERTY()
 PROPERTY(varied_string)
 	STATUS((std::string, its_status))
 ENDPROPERTY()
@@ -64,6 +67,7 @@ using namespace maf::util;
 namespace localipc = maf::localipc;
 namespace itc = maf::itc;
 using namespace std::chrono_literals;
+using namespace std;
 
 template <class PTrait>
 class Tester {
@@ -326,6 +330,28 @@ class Tester {
 
       // wait for signal register comes to server
       std::this_thread::sleep_for(1ms);
+
+      TEST_CASE_B(no_crash_when_executor_destroyed) {
+        std::thread serverThread([this] {
+          for (auto i = 0; i < 10; ++i) {
+            stub_->template setStatus<no_crash_string_property::status>(
+                "hello" + to_string(i));
+            this_thread::sleep_for(1ms);
+          }
+        });
+
+        for (int i = 0; i < 10; ++i) {
+          auto executor = directExecutor();
+          auto dproxy = proxy_->with(executor);
+          map<string, string> value = {{"hello", "world"}};
+          dproxy->template registerStatus<no_crash_string_property::status>(
+              [&value, i](const auto&) { value[to_string(i)] = "hallu"; });
+        }
+
+        serverThread.join();
+        EXPECT(true);
+      }
+      TEST_CASE_E(no_crash_when_executor_destroyed)
 
       stub_->setStatus(sentStatus);
       stub_->template setStatus<some_string_property::status>("hello");

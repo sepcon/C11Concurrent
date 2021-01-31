@@ -12,20 +12,22 @@ class ServiceStatusObserverDelegater : public ServiceStatusObserverIF {
  public:
   using DelegateCallback = std::function<void(Availability, Availability)>;
 
-  ServiceStatusObserverDelegater(util::ExecutorIFPtr executor,
+  ServiceStatusObserverDelegater(std::weak_ptr<util::ExecutorIF> wexecutor,
                                  DelegateCallback callback)
-      : callback_(std::move(callback)), executor_(std::move(executor)) {}
+      : callback_(std::move(callback)), wexecutor_(std::move(wexecutor)) {}
 
   void onServiceStatusChanged(const ServiceID &, Availability oldStatus,
                               Availability newStatus) override {
-    if (!executor_->execute(std::bind(callback_, oldStatus, newStatus))) {
+    auto executor = wexecutor_.lock();
+    if (!executor ||
+        !executor->execute(std::bind(callback_, oldStatus, newStatus))) {
       throw UnavailableException{};
     }
   }
 
  private:
   DelegateCallback callback_;
-  util::ExecutorIFPtr executor_;
+  std::weak_ptr<util::ExecutorIF> wexecutor_;
 };
 
 }  // namespace messaging

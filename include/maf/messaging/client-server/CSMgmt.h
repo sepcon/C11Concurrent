@@ -5,11 +5,14 @@
 
 #include <memory>
 
-#include "ServiceProviderIF.h"
-#include "ServiceRequesterIF.h"
+#include "CSShared.h"
 
 namespace maf {
 namespace messaging {
+
+class ServiceRequesterIF;
+class ServiceProviderIF;
+
 namespace csmgmt {
 
 MAF_EXPORT std::shared_ptr<ServiceRequesterIF> getServiceRequester(

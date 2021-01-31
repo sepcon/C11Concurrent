@@ -26,16 +26,18 @@ struct RegID {
     opID = OpIDInvalid;
   }
 
-  RegID() = default;
+  RegID(OpID _opid = OpIDInvalid,
+        RequestIDType _requestID = CSIDManager::INVALID_ID)
+      : opID{std::move(_opid)}, requestID{_requestID} {}
   ~RegID() {}  // provide this to avoid warning
   RegID(const RegID &) = default;
   RegID &operator=(const RegID &) = default;
   RegID(RegID &&other) noexcept
-      : requestID(other.requestID), opID(std::move(other.opID)) {
+      : opID(std::move(other.opID)), requestID(other.requestID) {
     other.requestID = CSIDManager::INVALID_ID;
     other.opID = OpIDInvalid;
   }
-  RegID &operator=(RegID &&other)  noexcept {
+  RegID &operator=(RegID &&other) noexcept {
     if (&other != this) {
       requestID = other.requestID;
       opID = std::move(other.opID);
@@ -45,8 +47,8 @@ struct RegID {
     return *this;
   }
 
-  RequestIDType requestID = CSIDManager::INVALID_ID;
   OpID opID = OpIDInvalid;
+  RequestIDType requestID = CSIDManager::INVALID_ID;
 };
 
 inline bool operator==(const RegID &r1, const RegID &r2) {

@@ -86,16 +86,37 @@ PTrait::template getOperationID<Output>(),                \
     return delegate_->respond(PTrait::template translate(answer));
   }
 
-  template <class Output, typename Arg0, typename... Args,
-            std::enable_if_t<std::is_constructible_v<Output, Arg0, Args...>,
-                             bool> = true>
-  ActionCallStatus respond(Arg0 resultInput0, Args &&... resultInputs) {
+  template <class Output, typename Arg0, typename... Args>
+  ActionCallStatus respond(Arg0 &&resultInput0, Args &&... resultInputs) {
     mc_maf_reqt_assert_is_same_opid(Output, Input);
     mc_maf_reqt_assert_is_output(Output);
 
     auto answer = std::make_shared<Output>(std::forward<Arg0>(resultInput0),
                                            std::forward<Args>(resultInputs)...);
     return this->respond(std::move(answer));
+  }
+
+  template <class Output>
+  ActionCallStatus reply(const std::shared_ptr<Output> &answer) {
+    mc_maf_reqt_assert_is_same_opid(Output, Input);
+    mc_maf_reqt_assert_is_output(Output);
+
+    MAF_LOGGER_VERBOSE("Reply to request `", delegate_->getOperationID(),
+                       "`: ", PTrait::template dump(answer));
+
+    return delegate_->reply(PTrait::template translate(answer));
+  }
+
+  template <class Output, typename Arg0, typename... Args>
+  ActionCallStatus reply(Arg0 &&resultInput0, Args &&... resultInputs) {
+    mc_maf_reqt_assert_is_same_opid(Output, Input);
+    mc_maf_reqt_assert_is_output(Output);
+    auto answer = std::make_shared<Output>(std::forward<Arg0>(resultInput0),
+                                           std::forward<Args>(resultInputs)...);
+    MAF_LOGGER_VERBOSE("Reply to request `", delegate_->getOperationID(),
+                       "`: ", PTrait::template dump(answer));
+
+    return this->reply(std::move(answer));
   }
 
   ActionCallStatus error(const std::shared_ptr<CSError> &err) {
